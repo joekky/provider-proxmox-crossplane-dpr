@@ -15,7 +15,8 @@ import (
 
 	"github.com/crossplane/upjet/pkg/terraform"
 
-	"github.com/upbound/upjet-provider-template/apis/v1beta1"
+	// "github.com/upbound/upjet-provider-template/apis/v1beta1"
+	"github.com/joekky/provider-proxmox-crossplane/apis/v1beta1"
 )
 
 const (

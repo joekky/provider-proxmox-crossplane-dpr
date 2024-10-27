@@ -10,8 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/crossplane/upjet/pkg/pipeline"
-
-	"github.com/upbound/upjet-provider-template/config"
+	"github.com/joekky/provider-proxmox-crossplane/config"
 )
 
 func main() {
@@ -25,3 +24,5 @@ func main() {
 	}
 	pipeline.Run(config.GetProvider(), absRootDir)
 }
+
+// #
