@@ -10,7 +10,7 @@ export TERRAFORM_VERSION ?= 1.5.7
 # licensed under BSL, which is not permitted.
 TERRAFORM_VERSION_VALID := $(shell [ "$(TERRAFORM_VERSION)" = "`printf "$(TERRAFORM_VERSION)\n1.6" | sort -V | head -n1`" ] && echo 1 || echo 0)
 
-export TERRAFORM_PROVIDER_SOURCE ?= joekky/proxmox-crossplane
+export TERRAFORM_PROVIDER_SOURCE ?= joekky/proxmox
 export TERRAFORM_PROVIDER_REPO ?= https://github.com/joekky/terraform-provider-proxmox
 export TERRAFORM_PROVIDER_VERSION ?= 2.9.14
 export TERRAFORM_PROVIDER_DOWNLOAD_NAME ?= terraform-provider-proxmox
@@ -168,6 +168,24 @@ run: go.build
 	@$(INFO) Running Crossplane locally out-of-cluster . . .
 	@# To see other arguments that can be provided, run the command with --help instead
 	UPBOUND_CONTEXT="local" $(GO_OUT_DIR)/provider --debug
+
+# Generate code and CRDs
+generate: generate.init
+	@$(INFO) Generating code and manifests
+	@go run cmd/generator/main.go $(TERRAFORM_PROVIDER_SOURCE) $(TERRAFORM_PROVIDER_VERSION)
+	@$(OK) Generating code and manifests
+
+build: generate
+	@$(INFO) Building provider binary
+	@go build -o $(GO_OUT_DIR)/provider cmd/provider/main.go
+	@$(OK) Building provider binary
+
+manifests: generate
+	@$(INFO) Generating manifests
+	@go run cmd/generator/main.go $(TERRAFORM_PROVIDER_SOURCE) $(TERRAFORM_PROVIDER_VERSION)
+	@$(OK) Generating manifests
+
+.PHONY: generate build manifests
 
 # ====================================================================================
 # End to End Testing

@@ -1,10 +1,11 @@
-name: joekky/proxmox
-resources:
-  proxmox_vm_qemu:
-    name: proxmox_vm_qemu
-    description: Manages a Proxmox Virtual Machine
-    title: Proxmox Virtual Machine
-    argumentDocs:
-      target_node: "Target node name"
-      name: "The name of the VM"
-      vmid: "The ID of the VM"
+apiVersion: provider.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: provider-proxmox
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: proxmox-credentials
+      key: credentials
