@@ -1,7 +1,7 @@
 package container
 
 import (
-	"github.com/upbound/upjet/pkg/config"
+	"github.com/crossplane/upjet/pkg/config"
 )
 
 // Configure configures the proxmox container group
