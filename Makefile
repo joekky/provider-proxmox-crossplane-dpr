@@ -5,9 +5,6 @@ PROJECT_NAME ?= provider-proxmox-crossplane
 PROJECT_REPO ?= github.com/joekky/$(PROJECT_NAME)
 
 export TERRAFORM_VERSION ?= 1.5.7
-
-# Do not allow a version of terraform greater than 1.5.x, due to versions 1.6+ being
-# licensed under BSL, which is not permitted.
 TERRAFORM_VERSION_VALID := $(shell [ "$(TERRAFORM_VERSION)" = "`printf "$(TERRAFORM_VERSION)\n1.6" | sort -V | head -n1`" ] && echo 1 || echo 0)
 
 export TERRAFORM_PROVIDER_SOURCE ?= joekky/proxmox
@@ -17,7 +14,6 @@ export TERRAFORM_PROVIDER_DOWNLOAD_NAME ?= terraform-provider-proxmox
 export TERRAFORM_PROVIDER_DOWNLOAD_URL_PREFIX ?= https://github.com/joekky/terraform-provider-proxmox/releases/download/v$(TERRAFORM_PROVIDER_VERSION)
 export TERRAFORM_NATIVE_PROVIDER_BINARY ?= terraform-provider-proxmox_v$(TERRAFORM_PROVIDER_VERSION)
 export TERRAFORM_DOCS_PATH ?= docs/resources
-
 
 PLATFORMS ?= linux_amd64 linux_arm64
 
@@ -129,7 +125,7 @@ $(TERRAFORM_PROVIDER_SCHEMA): $(TERRAFORM)
 
 pull-docs:
 	@if [ ! -d "$(WORK_DIR)/$(TERRAFORM_PROVIDER_SOURCE)" ]; then \
-  		mkdir -p "$(WORK_DIR)/$(TERRAFORM_PROVIDER_SOURCE)" && \
+		mkdir -p "$(WORK_DIR)/$(TERRAFORM_PROVIDER_SOURCE)" && \
 		git clone -c advice.detachedHead=false --depth 1 --filter=blob:none --branch "v$(TERRAFORM_PROVIDER_VERSION)" --sparse "$(TERRAFORM_PROVIDER_REPO)" "$(WORK_DIR)/$(TERRAFORM_PROVIDER_SOURCE)"; \
 	fi
 	@git -C "$(WORK_DIR)/$(TERRAFORM_PROVIDER_SOURCE)" sparse-checkout set "$(TERRAFORM_DOCS_PATH)"
@@ -137,140 +133,12 @@ pull-docs:
 generate.init: $(TERRAFORM_PROVIDER_SCHEMA) pull-docs
 
 .PHONY: $(TERRAFORM_PROVIDER_SCHEMA) pull-docs check-terraform-version
+
 # ====================================================================================
 # Targets
 
-# NOTE: the build submodule currently overrides XDG_CACHE_HOME in order to
-# force the Helm 3 to use the .work/helm directory. This causes Go on Linux
-# machines to use that directory as the build cache as well. We should adjust
-# this behavior in the build submodule because it is also causing Linux users
-# to duplicate their build cache, but for now we just make it easier to identify
-# its location in CI so that we cache between builds.
-go.cachedir:
-	@go env GOCACHE
-
-# Generate a coverage report for cobertura applying exclusions on
-# - generated file
-cobertura:
-	@cat $(GO_TEST_OUTPUT)/coverage.txt | \
-		grep -v zz_ | \
-		$(GOCOVER_COBERTURA) > $(GO_TEST_OUTPUT)/cobertura-coverage.xml
-
-# Update the submodules, such as the common build scripts.
 submodules:
 	@git submodule sync
 	@git submodule update --init --recursive
 
-# This is for running out-of-cluster locally, and is for convenience. Running
-# this make target will print out the command which was used. For more control,
-# try running the binary directly with different arguments.
-run: go.build
-	@$(INFO) Running Crossplane locally out-of-cluster . . .
-	@# To see other arguments that can be provided, run the command with --help instead
-	UPBOUND_CONTEXT="local" $(GO_OUT_DIR)/provider --debug
-
-# Generate code and CRDs
-generate: generate.init
-	@$(INFO) Generating code and manifests
-	@go run cmd/generator/main.go $(TERRAFORM_PROVIDER_SOURCE) $(TERRAFORM_PROVIDER_VERSION)
-	@$(OK) Generating code and manifests
-
-build: generate
-	@$(INFO) Building provider binary
-	@go build -o $(GO_OUT_DIR)/provider cmd/provider/main.go
-	@$(OK) Building provider binary
-
-manifests: generate
-	@$(INFO) Generating manifests
-	@go run cmd/generator/main.go $(TERRAFORM_PROVIDER_SOURCE) $(TERRAFORM_PROVIDER_VERSION)
-	@$(OK) Generating manifests
-
-.PHONY: generate build manifests
-
-# ====================================================================================
-# End to End Testing
-CROSSPLANE_VERSION = 1.16.0
-CROSSPLANE_NAMESPACE = upbound-system
--include build/makelib/local.xpkg.mk
--include build/makelib/controlplane.mk
-
-# This target requires the following environment variables to be set:
-# - UPTEST_EXAMPLE_LIST, a comma-separated list of examples to test
-#   To ensure the proper functioning of the end-to-end test resource pre-deletion hook, it is crucial to arrange your resources appropriately. 
-#   You can check the basic implementation here: https://github.com/crossplane/uptest/blob/main/internal/proxmoxs/03-delete.yaml.tmpl.
-# - UPTEST_CLOUD_CREDENTIALS (optional), multiple sets of AWS IAM User credentials specified as key=value pairs.
-#   The support keys are currently `DEFAULT` and `PEER`. So, an example for the value of this env. variable is:
-#   DEFAULT='[default]
-#   aws_access_key_id = REDACTED
-#   aws_secret_access_key = REDACTED'
-#   PEER='[default]
-#   aws_access_key_id = REDACTED
-#   aws_secret_access_key = REDACTED'
-#   The associated `ProviderConfig`s will be named as `default` and `peer`.
-# - UPTEST_DATASOURCE_PATH (optional), please see https://github.com/crossplane/uptest#injecting-dynamic-values-and-datasource
-uptest: $(UPTEST) $(KUBECTL) $(KUTTL)
-	@$(INFO) running automated tests
-	@KUBECTL=$(KUBECTL) KUTTL=$(KUTTL) $(UPTEST) e2e "${UPTEST_EXAMPLE_LIST}" --data-source="${UPTEST_DATASOURCE_PATH}" --setup-script=cluster/test/setup.sh --default-conditions="Test" || $(FAIL)
-	@$(OK) running automated tests
-
-local-deploy: build controlplane.up local.xpkg.deploy.provider.$(PROJECT_NAME)
-	@$(INFO) running locally built provider
-	@$(KUBECTL) wait provider.pkg $(PROJECT_NAME) --for condition=Healthy --timeout 5m
-	@$(KUBECTL) -n upbound-system wait --for=condition=Available deployment --all --timeout=5m
-	@$(OK) running locally built provider
-
-e2e: local-deploy uptest
-
-crddiff: $(UPTEST)
-	@$(INFO) Checking breaking CRD schema changes
-	@for crd in $${MODIFIED_CRD_LIST}; do \
-		if ! git cat-file -e "$${GITHUB_BASE_REF}:$${crd}" 2>/dev/null; then \
-			echo "CRD $${crd} does not exist in the $${GITHUB_BASE_REF} branch. Skipping..." ; \
-			continue ; \
-		fi ; \
-		echo "Checking $${crd} for breaking API changes..." ; \
-		changes_detected=$$($(UPTEST) crddiff revision <(git cat-file -p "$${GITHUB_BASE_REF}:$${crd}") "$${crd}" 2>&1) ; \
-		if [[ $$? != 0 ]] ; then \
-			printf "\033[31m"; echo "Breaking change detected!"; printf "\033[0m" ; \
-			echo "$${changes_detected}" ; \
-			echo ; \
-		fi ; \
-	done
-	@$(OK) Checking breaking CRD schema changes
-
-schema-version-diff:
-	@$(INFO) Checking for native state schema version changes
-	@export PREV_PROVIDER_VERSION=$$(git cat-file -p "${GITHUB_BASE_REF}:Makefile" | sed -nr 's/^export[[:space:]]*TERRAFORM_PROVIDER_VERSION[[:space:]]*:=[[:space:]]*(.+)/\1/p'); \
-	echo Detected previous Terraform provider version: $${PREV_PROVIDER_VERSION}; \
-	echo Current Terraform provider version: $${TERRAFORM_PROVIDER_VERSION}; \
-	mkdir -p $(WORK_DIR); \
-	git cat-file -p "$${GITHUB_BASE_REF}:config/schema.json" > "$(WORK_DIR)/schema.json.$${PREV_PROVIDER_VERSION}"; \
-	./scripts/version_diff.py config/generated.lst "$(WORK_DIR)/schema.json.$${PREV_PROVIDER_VERSION}" config/schema.json
-	@$(OK) Checking for native state schema version changes
-
-.PHONY: cobertura submodules fallthrough run crds.clean
-
-# ====================================================================================
-# Special Targets
-
-define CROSSPLANE_MAKE_HELP
-Crossplane Targets:
-    cobertura             Generate a coverage report for cobertura applying exclusions on generated files.
-    submodules            Update the submodules, such as the common build scripts.
-    run                   Run crossplane locally, out-of-cluster. Useful for development.
-
-endef
-# The reason CROSSPLANE_MAKE_HELP is used instead of CROSSPLANE_HELP is because the crossplane
-# binary will try to use CROSSPLANE_HELP if it is set, and this is for something different.
-export CROSSPLANE_MAKE_HELP
-
-crossplane.help:
-	@echo "$$CROSSPLANE_MAKE_HELP"
-
-help-special: crossplane.help
-
-.PHONY: crossplane.help help-special
-
-# TODO(negz): Update CI to use these targets.
-vendor: modules.download
-vendor.check: modules.check
+.PHONY: submodules fallthrough
